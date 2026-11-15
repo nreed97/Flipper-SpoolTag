@@ -310,7 +310,7 @@ function chooseBase(f) {
   state.base = f;
   const box = $("filament-chosen");
   if (!f) { box.hidden = true; return; }
-  for (const el of form.elements) if (el.name && !SPOOL_FIELDS.includes(el.name)) el.value = "";
+  for (const el of form.elements) if (el.name && el.type !== "radio" && !SPOOL_FIELDS.includes(el.name) && el.name !== "gross_weight") el.value = "";
   applyFields(filamentToFields(f), false);
   state.original = getForm();
   box.hidden = false;

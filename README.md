@@ -4,6 +4,26 @@ Tested with a Flipper Zero on Momentum firmware `mntm-012`, Spoolman 0.27, NTAG2
 
 A local web page for adding spools to Spoolman and tagging them with NFC, using a Flipper Zero as the reader and writer. It follows SpoolPainter's workflow, from a PC, for the Snapmaker U1 extended firmware (SpoolLink).
 
+## Screenshots
+
+A scanned OpenSpool tag that isn't in Spoolman yet. The form fills in from the tag, and the closest filaments you already have are listed on the left.
+
+![Scanned tag with closest matches](docs/screenshots/scan-suggestions.png)
+
+After **Save, link & write**: the spool is created, the tag is linked as a Spoolman tag, and the OpenSpool data is written and read back.
+
+![Saved spool](docs/screenshots/saved.png)
+
+Entering a used spool from its weight on a scale:
+
+<img src="docs/screenshots/scale-weight.png" alt="Scale weight minus empty spool" width="640">
+
+On a phone, in dark mode:
+
+<img src="docs/screenshots/phone-dark.png" alt="Phone layout, dark mode" width="320">
+
+The screenshots use simulated tags (`--fake`) and a demo Spoolman.
+
 ## Setup (Windows, PowerShell)
 
 Needs Python 3.10+ and `pyserial`. Find your Flipper's COM port in Device Manager (it's auto-detected if you leave `--port` out).
