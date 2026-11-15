@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Filament Manager</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></svg>
+    <h1>Filament Manager</h1>
+  </div>
+  <div class="chips">
+    <span id="chip-flipper" class="chip">Flipper…</span>
+    <span id="chip-spoolman" class="chip">Spoolman…</span>
+    <button id="btn-settings" class="ghost" title="Settings">Settings</button>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- TAG -->
+  <section class="card" id="tag-card">
+    <div class="card-head">
+      <h2>Tag</h2>
+      <label class="switch"><input type="checkbox" id="autoscan" checked> Auto-scan</label>
+    </div>
+
+    <div id="scan-state" class="scan-state idle">
+      <div class="pulse"></div>
+      <div>
+        <div id="scan-title" class="scan-title">Starting…</div>
+        <div id="scan-sub" class="muted small"></div>
+      </div>
+      <div class="scan-actions">
+        <button id="btn-scan" class="ghost">Scan next tag</button>
+        <button id="btn-read" class="ghost">Read now</button>
+      </div>
+    </div>
+
+    <div id="tag-info" hidden>
+      <div class="tag-line">
+        <code id="tag-uid" class="uid"></code>
+        <span id="tag-family" class="pill"></span>
+        <span id="tag-format" class="pill"></span>
+      </div>
+      <div id="tag-filament" class="tag-filament"></div>
+      <div id="tag-notes" class="muted small"></div>
+    </div>
+
+    <div id="linked" hidden></div>
+
+    <div id="suggest" hidden>
+      <h3>Closest matches</h3>
+      <div id="suggest-list" class="list"></div>
+    </div>
+
+    <details id="fake-panel" class="fake" hidden>
+      <summary>Simulated tag (fake mode)</summary>
+      <div class="row wrap">
+        <button data-fake="blank" class="ghost small">Blank NTAG215</button>
+        <button data-fake="blank2" class="ghost small">Another blank</button>
+        <button data-fake="classic" class="ghost small">Mifare Classic</button>
+        <button data-fake="none" class="ghost small">Remove tag</button>
+      </div>
+    </details>
+  </section>
+
+  <!-- SPOOL FORM -->
+  <section class="card" id="form-card">
+    <div class="card-head">
+      <h2 id="form-title">New spool</h2>
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-new" class="tab active">New spool</button>
+        <button role="tab" id="tab-existing" class="tab">Existing spool</button>
+      </div>
+    </div>
+
+    <div id="pick-existing" class="picker" hidden>
+      <input id="spool-search" type="search" placeholder="Search spools: material, brand, color, #id">
+      <div id="spool-list" class="list scroll"></div>
+    </div>
+
+    <div id="pick-new" class="picker">
+      <div class="row">
+        <input id="upc" inputmode="numeric" placeholder="UPC / EAN barcode (type or scan)" autocomplete="off">
+        <button id="btn-upc" class="ghost">Look up</button>
+      </div>
+      <div id="upc-result" class="muted small"></div>
+      <div class="row">
+        <input id="filament-search" type="search" placeholder="Start from one of your filaments (optional)">
+      </div>
+      <div id="filament-list" class="list scroll short" hidden></div>
+      <div id="filament-chosen" class="chosen" hidden></div>
+    </div>
+
+    <form id="form" autocomplete="off">
+      <fieldset>
+        <legend>Filament</legend>
+        <div class="grid">
+          <label>Brand<input name="brand" list="dl-vendors" placeholder="Generic"></label>
+          <label>Material *<input name="type" list="dl-materials" required placeholder="PLA"></label>
+          <label>Variant<input name="subtype" list="dl-variants" placeholder="Basic, Silk, Matte…"></label>
+          <label>Name<input name="name" placeholder="e.g. Galaxy Black"></label>
+          <label class="color-field">Color *
+            <span class="color-row"><input type="color" id="color-pick" value="#ffffff"><input name="color_hex" required placeholder="FFFFFF" maxlength="7"></span>
+          </label>
+          <label>Extra colors<input name="multi_color_hexes" placeholder="FF0000,00FF00"></label>
+          <label>Nozzle °C<input name="extruder_temp" type="number" min="0" max="500"></label>
+          <label>Bed °C<input name="bed_temp" type="number" min="0" max="200"></label>
+          <label>Density g/cm³<input name="density" type="number" step="0.01" placeholder="1.24"></label>
+          <label>Diameter mm<input name="diameter" type="number" step="0.01" placeholder="1.75"></label>
+          <label>Net weight g<input name="weight" type="number" step="1" placeholder="1000"></label>
+          <label>Empty spool g<input name="spool_weight" type="number" step="1" min="0" placeholder="from brand"></label>
+          <label>Price<input name="price" type="number" step="0.01"></label>
+          <label>UPC / article no.<input name="upc"></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Spool</legend>
+        <div class="grid">
+          <div class="weigh wide">
+            <div class="seg" role="radiogroup" aria-label="How to enter what's left">
+              <label><input type="radio" name="wmode" value="remaining" checked> Remaining</label>
+              <label><input type="radio" name="wmode" value="scale"> Scale weight</label>
+            </div>
+            <label id="w-remaining">Filament left g<input name="remaining_weight" type="number" step="1" min="0" placeholder="full"></label>
+            <label id="w-scale" hidden>Spool on the scale g<input name="gross_weight" type="number" step="1" min="0" placeholder="e.g. 968"></label>
+            <div id="w-calc" class="muted small" hidden></div>
+          </div>
+          <label>Location<input name="location" list="dl-locations"></label>
+          <label>Lot<input name="lot_nr"></label>
+          <label class="wide">Comment<input name="comment"></label>
+        </div>
+        <div id="spool-tags" class="spool-tags" hidden></div>
+      </fieldset>
+
+      <div class="actions">
+        <label class="check"><input type="checkbox" id="opt-link" checked> Link the scanned tag</label>
+        <label class="check"><input type="checkbox" id="opt-write" checked> Write OpenSpool data to it</label>
+        <div class="spacer"></div>
+        <button type="button" id="btn-clear" class="ghost">Clear</button>
+        <button type="button" id="btn-save-only" class="ghost">Save only</button>
+        <button type="submit" id="btn-go" class="primary">Save, link &amp; write</button>
+      </div>
+      <div id="result" class="result" hidden></div>
+    </form>
+  </section>
+</main>
+
+<datalist id="dl-vendors"></datalist>
+<datalist id="dl-materials"></datalist>
+<datalist id="dl-locations"></datalist>
+<datalist id="dl-variants">
+  <option>Basic</option><option>Matte</option><option>Silk</option><option>HF</option><option>Rapid</option>
+  <option>Wood</option><option>Marble</option><option>Glow</option><option>Sparkle</option><option>Translucent</option>
+  <option>Carbon Fiber</option><option>Dual Color</option><option>Rainbow</option><option>Metal</option>
+</datalist>
+
+<dialog id="dlg-settings">
+  <form method="dialog" class="dlg">
+    <h2>Settings</h2>
+    <label>Spoolman URL<input id="set-url" placeholder="http://192.168.1.100:7912"></label>
+    <label>Tag storage (must match the printer's Spoolman Tag Storage)
+      <select id="set-store">
+        <option value="native">Spoolman tags (native, v0.27+)</option>
+        <option value="card_uids">Card UIDs extra field (older SpoolLink setup)</option>
+      </select>
+    </label>
+    <div class="row end"><button value="cancel" class="ghost">Cancel</button><button id="set-save" value="ok" class="primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlg-confirm">
+  <form method="dialog" class="dlg">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-body"></p>
+    <div class="row end"><button value="no" class="ghost">Cancel</button><button value="yes" class="primary" id="confirm-yes">Move it</button></div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
