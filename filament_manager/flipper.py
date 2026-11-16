@@ -5,7 +5,9 @@ Syntax checked against the mntm-012 source (applications/main/nfc/cli).
 Reading uses one fast NFC operation plus a file read:
   [main]  storage remove /ext/nfc/filament_manager.nfc
   [nfc]   dump -p mfu -f /ext/nfc/filament_manager.nfc -t 3000   (NTAG / Ultralight)
-  [nfc]   dump -p mfc -f ... -t 8000                              (Mifare Classic fallback)
+  [nfc]   dump -p 14_3a -f ... -t 3000      (Mifare Classic: get the UID first,
+  [main]  storage write_chunk /ext/nfc/.cache/<UID>.keys N   put Snapmaker's derived
+  [nfc]   dump -p mfc -f ... -t 8000         keys in the key cache, then dump)
   [main]  storage read /ext/nfc/filament_manager.nfc              (Flipper .nfc text file)
 
 Writing, inside the nfc shell:
@@ -23,7 +25,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from . import ace, ndef, openspool
+from . import ace, ndef, openspool, snapmaker
 
 FLIPPER_VID, FLIPPER_PID = 0x0483, 0x5740
 NFC_PROMPT = "[nfc]>: "
@@ -32,6 +34,8 @@ HEX_BYTES = r"((?:[0-9A-Fa-f?]{2}[ ]?)+)"
 BLOCK_RE = re.compile(r"Block:\s*(\d+)\s*Data:\s*" + HEX_BYTES)
 DUMP_PATH = "/ext/nfc/filament_manager.nfc"
 FIRST_USER_PAGE = 4
+KEY_CACHE_DIR = "/ext/nfc/.cache"
+CLASSIC_SAKS = {"08", "18", "09", "19", "28", "38", "88", "98"}
 
 
 class FlipperError(RuntimeError):
@@ -75,7 +79,7 @@ class TagInfo:
     user_data: bytes = b""
     blocks: dict = field(default_factory=dict)   # Mifare Classic blocks we could read
     records: list = field(default_factory=list)
-    format: str = "unknown"   # openspool | ace | ndef | blank | unformatted | uid_only
+    format: str = "unknown"   # openspool | ace | snapmaker | ndef | blank | unformatted | uid_only
     filament: dict = None     # decoded filament fields, when the format carries them
     notes: list = field(default_factory=list)
 
@@ -119,6 +123,23 @@ def decode_type2(tag, pages):
         tag.format = "ndef"
     else:
         tag.format = "blank"
+    return tag
+
+
+def decode_classic(tag, blocks):
+    """Fill in a TagInfo from Mifare Classic blocks (dict block -> 16 bytes | None)."""
+    data, complete = snapmaker.blocks_to_bytes(blocks)
+    known = len([b for b in blocks.values() if b])
+    fil = snapmaker.parse(data)
+    if not fil:
+        tag.notes.append(f"Read {known} of {len(blocks)} blocks, but this isn't a format the app knows.")
+        return tag
+    ok, version = snapmaker.verify_signature(data) if complete else (False, None)
+    fil["signature_ok"] = ok
+    tag.format, tag.filament = "snapmaker", fil
+    if not ok:
+        tag.notes.append("Snapmaker data decoded, but its signature did not check out"
+                         + ("" if complete else " (some blocks could not be read)") + ".")
     return tag
 
 
@@ -210,28 +231,92 @@ class Flipper:
 
     # ---- reading --------------------------------------------------------
 
-    def _dump(self, protos=("mfu", "mfc")):
-        """Dump the tag in range to DUMP_PATH and return the parsed file."""
-        self.ensure_main()
-        self.command(f"storage remove {DUMP_PATH}")
+    def _dump_cmd(self, proto, ms):
         self.ensure_nfc()
-        outputs = []
-        timeouts = {"mfu": 3000, "mfc": 8000}
-        for proto, ms in ((p, timeouts[p]) for p in protos):
-            out = self.command(f"dump -p {proto} -f {DUMP_PATH} -t {ms}", timeout=ms / 1000 + 5)
-            outputs.append(out)
-            if "Dump saved" in out:
-                break
-        else:
-            joined = "\n".join(outputs)
-            if re.search(r"timeout|not present|no card", joined, re.I):
-                raise NoTag("No tag in range")
-            raise FlipperError("Dump failed: " + joined.strip()[-300:])
+        return self.command(f"dump -p {proto} -f {DUMP_PATH} -t {ms}", timeout=ms / 1000 + 5)
+
+    def _read_dump_file(self):
         self.ensure_main()
         text = self.command(f"storage read {DUMP_PATH}", timeout=10)
         if "Size:" not in text:
             raise FlipperError("Could not read the dump file back: " + text.strip()[-200:])
         return parse_nfc_file(text)
+
+    def _write_file(self, path, text):
+        """Create `path` on the Flipper with `text` (main shell, write_chunk)."""
+        self.ensure_main()
+        self.command(f"storage remove {path}")
+        data = text.encode()
+        self.ser.reset_input_buffer()
+        self.ser.write(f"storage write_chunk {path} {len(data)}\r".encode())
+        deadline, buf = time.monotonic() + 5, ""
+        while "Ready" not in buf and time.monotonic() < deadline:
+            chunk = self.ser.read(self.ser.in_waiting or 1)
+            buf += chunk.decode("utf-8", errors="replace")
+            if ANSI.sub("", buf).endswith(">: "):
+                raise FlipperError(f"Could not write {path}: {ANSI.sub('', buf).strip()[-160:]}")
+        if "Ready" not in buf:
+            raise FlipperError(f"Could not write {path}: no Ready from the Flipper.")
+        self.ser.write(data)
+        out = self._read_prompt(5)
+        if "error" in out.lower():
+            raise FlipperError(f"Could not write {path}: {out.strip()[-160:]}")
+
+    def _dump_classic(self, outputs):
+        """Mifare Classic: UID via ISO14443-3A, then a keyed dump.
+
+        The CLI's mfc dump only uses keys from the Flipper's key cache. If
+        there is no cache file for this UID, we write Snapmaker's derived keys
+        there (and remove them again if they turn out to be wrong). If no keys
+        work we still return the UID so the spool can be linked by UID.
+        """
+        out = self._dump_cmd("14_3a", 3000)
+        outputs.append(out)
+        if "Dump saved" not in out:
+            return None
+        info, _, _ = self._read_dump_file()
+        uid = hex_to_bytes(info.get("UID", ""))
+        if not uid:
+            return None
+        self.command(f"storage remove {DUMP_PATH}")
+        cache = f"{KEY_CACHE_DIR}/{uid.hex().upper()}.keys"
+        had_cache = "File, size" in self.command(f"storage stat {cache}")
+        if not had_cache:
+            self.command(f"storage mkdir {KEY_CACHE_DIR}")
+            self._write_file(cache, snapmaker.key_cache_file(uid))
+        out = self._dump_cmd("mfc", 8000)
+        outputs.append(out)
+        if "Dump saved" in out:
+            return self._read_dump_file()
+        self.ensure_main()
+        if not had_cache:
+            self.command(f"storage remove {cache}")
+            note = "Sectors are locked with keys this app doesn't know (not a Snapmaker tag?). Linked by UID only."
+        else:
+            note = (f"The Flipper's saved keys for this tag ({cache}) did not work. "
+                    "Delete that file to let the app try Snapmaker's keys. Linked by UID only.")
+        info["_locked_note"] = note
+        return info, {}, {}
+
+    def _dump(self, protos=("mfu", "mfc")):
+        """Dump the tag in range to DUMP_PATH and return the parsed file."""
+        self.ensure_main()
+        self.command(f"storage remove {DUMP_PATH}")
+        outputs = []
+        for proto in protos:
+            if proto == "mfc":
+                result = self._dump_classic(outputs)
+                if result:
+                    return result
+                continue
+            out = self._dump_cmd(proto, 3000)
+            outputs.append(out)
+            if "Dump saved" in out:
+                return self._read_dump_file()
+        joined = "\n".join(outputs)
+        if re.search(r"timeout|not present|no card", joined, re.I):
+            raise NoTag("No tag in range")
+        raise FlipperError("Dump failed: " + joined.strip()[-300:])
 
     def read_tag(self):
         """Read UID, type and contents of the tag in range."""
@@ -294,11 +379,17 @@ class Flipper:
         if pages:
             tag.family = "ntag"
             return decode_type2(tag, pages)
-        tag.family = "mifare_classic" if "Classic" in device else "other"
+        classic = "Classic" in device or tag.sak.upper() in CLASSIC_SAKS
+        tag.family = "mifare_classic" if classic else "other"
+        if classic and not blocks:
+            tag.device = "Mifare Classic"
         tag.blocks = blocks
         tag.format = "uid_only"
-        known = len([b for b in blocks.values() if b])
-        tag.notes.append(f"Read {known} of {len(blocks)} blocks. Decoding this tag type comes in step 4.")
+        if "_locked_note" in info:
+            tag.notes.append(info["_locked_note"])
+            return tag
+        if classic:
+            decode_classic(tag, blocks)
         return tag
 
     # ---- writing --------------------------------------------------------

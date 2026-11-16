@@ -60,7 +60,12 @@ function confirmDialog(title, body, yes = "OK") {
 
 function vendorName(f) { return (f && f.vendor && f.vendor.name) || ""; }
 function decodeExtra(v) { if (v == null) return ""; try { const x = JSON.parse(v); return typeof x === "string" ? x : String(x); } catch { return String(v); } }
-function filLabel(f) { return [vendorName(f), f.material, decodeExtra((f.extra || {}).variant), f.name].filter(Boolean).join(" "); }
+function filLabel(f) {
+  // Skip brand/material/variant when the filament's name already says them ("Snapmaker PETG HF Dark Green").
+  const name = String(f.name || ""), low = name.toLowerCase();
+  const parts = [vendorName(f), f.material, decodeExtra((f.extra || {}).variant)].filter((x) => x && !low.includes(String(x).toLowerCase()));
+  return [...parts, name].filter(Boolean).join(" ");
+}
 function spoolLabel(s) { return `#${s.id} ${filLabel(s.filament || {})}`; }
 
 // ---------------------------------------------------------------- status & catalog
@@ -140,7 +145,7 @@ function tagToFields(f) {
 
 async function handleTag(t) {
   state.tag = t; state.lastUid = t.uid;
-  const fmt = { openspool: "OpenSpool", ace: "Anycubic ACE", ndef: "Other NDEF", blank: "Blank", unformatted: "Unformatted", uid_only: "UID only" }[t.format] || t.format;
+  const fmt = { openspool: "OpenSpool", ace: "Anycubic ACE", snapmaker: "Snapmaker", ndef: "Other NDEF", blank: "Blank", unformatted: "Unformatted", uid_only: "UID only" }[t.format] || t.format;
   setScan("done", "Tag read", `${t.device || t.family} · ${fmt}`);
   $("tag-info").hidden = false;
   $("tag-uid").textContent = t.uid;
@@ -148,7 +153,7 @@ async function handleTag(t) {
   $("tag-format").textContent = fmt;
   const f = t.filament;
   $("tag-filament").innerHTML = f
-    ? `<span class="sw lg" style="background:${hex(f.color_hex)}"></span><span><b>${esc([f.brand, f.type, f.subtype].filter(Boolean).join(" "))}</b><br><span class="muted small">${esc([f.min_temp && `${f.min_temp}–${f.max_temp} °C`, f.weight && `${f.weight} g`, f.sku].filter(Boolean).join(" · "))}</span></span>`
+    ? `<span class="sw lg" style="background:${hex(f.color_hex)}"></span><span><b>${esc([f.brand, f.type, f.subtype].filter(Boolean).join(" "))}</b><br><span class="muted small">${esc([f.min_temp && `${f.min_temp}–${f.max_temp} °C`, f.weight && `${f.weight} g`, f.sku && `SKU ${f.sku}`, f.mfg_date && `made ${f.mfg_date}`].filter(Boolean).join(" · "))}</span></span>`
     : "";
   $("tag-notes").textContent = (t.notes || []).join(" ");
 
