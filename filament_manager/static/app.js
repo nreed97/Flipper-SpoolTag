@@ -457,13 +457,15 @@ function buildSave() {
 
 function showResult(kind, html) { const r = $("result"); r.hidden = false; r.className = "result " + kind; r.innerHTML = html; }
 
-async function linkWithConfirm(spoolId, uid) {
-  try { return await api("/api/link", { spool_id: spoolId, uid, format: state.tag && state.tag.format }); }
+async function linkWithConfirm(spoolId, uid, format) {
+  // `format` is what the tag will hold after this save: "openspool" when we're about to write it.
+  format = format || (state.tag && state.tag.format);
+  try { return await api("/api/link", { spool_id: spoolId, uid, format }); }
   catch (e) {
     if (e.status !== 409 || !e.data.conflict) throw e;
     const names = e.data.conflict.map((c) => c.name).join(", ");
     if (!(await confirmDialog("Tag already in use", `${uid} is linked to ${names}. Move it to spool #${spoolId}? It will be removed from the other spool.`, "Move it"))) return null;
-    return await api("/api/link", { spool_id: spoolId, uid, move: true, format: state.tag && state.tag.format });
+    return await api("/api/link", { spool_id: spoolId, uid, move: true, format });
   }
 }
 
@@ -481,7 +483,7 @@ async function go(doLink, doWrite) {
     steps.push(`${payload.spool_id ? "Updated" : "Created"} spool #${spool.id} (${esc(filLabel(spool.filament))})`);
     if (doLink) {
       showResult("busy", steps.join("<br>") + "<br>Linking tag…");
-      const r = await linkWithConfirm(spool.id, tag.uid);
+      const r = await linkWithConfirm(spool.id, tag.uid, doWrite ? "openspool" : tag.format);
       if (r) steps.push(`Linked tag ${esc(tag.uid)}${r.moved_from.length ? ` (moved from #${r.moved_from.join(", #")})` : ""}`);
       else { steps.push("Tag not linked (cancelled)"); doWrite = false; }
     }
@@ -517,11 +519,12 @@ async function go(doLink, doWrite) {
 
 async function linkSecondTag(spoolId, t) {
   try {
-    const r = await linkWithConfirm(spoolId, t.uid);
+    const write = t.family === "ntag" && $("opt-write").checked;
+    const r = await linkWithConfirm(spoolId, t.uid, write ? "openspool" : t.format);
     if (!r) return showResult("bad", "Second tag not linked.");
     $("tag-uid").textContent = t.uid;
     let msg = `Linked tag ${esc(t.uid)} to spool #${spoolId} as well.`;
-    if (t.family === "ntag" && $("opt-write").checked) {
+    if (write) {
       await api("/api/tag/write", { spool_id: spoolId, expect_uid: t.uid });
       msg += " Wrote OpenSpool data.";
     }
