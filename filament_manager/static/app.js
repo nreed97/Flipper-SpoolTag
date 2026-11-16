@@ -60,7 +60,12 @@ function confirmDialog(title, body, yes = "OK") {
 
 function vendorName(f) { return (f && f.vendor && f.vendor.name) || ""; }
 function decodeExtra(v) { if (v == null) return ""; try { const x = JSON.parse(v); return typeof x === "string" ? x : String(x); } catch { return String(v); } }
-function filLabel(f) { return [vendorName(f), f.material, decodeExtra((f.extra || {}).variant), f.name].filter(Boolean).join(" "); }
+function filLabel(f) {
+  // Skip brand/material/variant when the filament's name already says them ("Snapmaker PETG HF Dark Green").
+  const name = String(f.name || ""), low = name.toLowerCase();
+  const parts = [vendorName(f), f.material, decodeExtra((f.extra || {}).variant)].filter((x) => x && !low.includes(String(x).toLowerCase()));
+  return [...parts, name].filter(Boolean).join(" ");
+}
 function spoolLabel(s) { return `#${s.id} ${filLabel(s.filament || {})}`; }
 
 // ---------------------------------------------------------------- status & catalog
