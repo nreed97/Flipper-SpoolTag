@@ -7,8 +7,8 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from filament_manager import ace, ndef, openspool  # noqa: E402
-from filament_manager.fake import FakeFlipperSerial, FakeTag  # noqa: E402
+from filament_manager import ace, ndef, openspool, snapmaker  # noqa: E402
+from filament_manager.fake import FakeFlipperSerial, FakeTag, snapmaker_tag  # noqa: E402
 from filament_manager.flipper import Flipper, FlipperError, NoTag  # noqa: E402
 
 FIELDS = {"type": "pla", "color_hex": "ff6a13", "brand": "Generic", "subtype": "Silk",
@@ -90,8 +90,49 @@ class FlipperTests(unittest.TestCase):
         self.assertEqual(t.uid, "1D9B9E1A")
         self.assertEqual(t.family, "mifare_classic")
         self.assertEqual(t.format, "uid_only")
+        self.assertTrue(any("UID only" in n for n in t.notes))
         with self.assertRaises(FlipperError):
             f.write_openspool(FIELDS)
+
+    def test_locked_classic_leaves_no_key_file(self):
+        f, ser = make(FakeTag(uid="1D9B9E1A", classic=True))
+        f.read_tag()
+        self.assertNotIn("/ext/nfc/.cache/1D9B9E1A.keys", ser.files)
+
+    def test_snapmaker_tag(self):
+        f, ser = make(snapmaker_tag())
+        t = f.read_tag()
+        self.assertEqual(t.uid, "0C1EA85E")
+        self.assertEqual(t.family, "mifare_classic")
+        self.assertEqual(t.format, "snapmaker")
+        fil = t.filament
+        self.assertEqual((fil["brand"], fil["type"], fil["subtype"]), ("Snapmaker", "PLA", "SnapSpeed"))
+        self.assertEqual(fil["color_hex"], "E72F1D")
+        self.assertEqual((fil["min_temp"], fil["max_temp"], fil["weight"]), (190, 230, 500))
+        self.assertFalse(fil["signature_ok"])  # the fake isn't signed
+        self.assertIn("/ext/nfc/.cache/0C1EA85E.keys", ser.files)
+        # Second read reuses the cache file instead of rewriting it.
+        n = sum(c.startswith("storage write_chunk") for c in ser.commands)
+        self.assertEqual(f.read_tag().format, "snapmaker")
+        self.assertEqual(sum(c.startswith("storage write_chunk") for c in ser.commands), n)
+
+
+class SnapmakerTests(unittest.TestCase):
+    def test_key_derivation(self):
+        # Sector 0 keys from a real Snapmaker tag with UID C1EA85E3 (trailer bytes 0-5 and 10-15).
+        a, b = snapmaker.sector_keys(bytes.fromhex("C1EA85E3"))[0]
+        self.assertEqual(a.hex().upper(), "E67C7116F60E")
+        self.assertEqual(b.hex().upper(), "20131608C3ED")
+
+    def test_cache_file_format(self):
+        text = snapmaker.key_cache_file(bytes.fromhex("C1EA85E3"))
+        self.assertTrue(text.startswith("Filetype: Flipper NFC keys\nVersion: 1\n"))
+        self.assertIn("Key A map: 000000000000FFFF", text)
+        self.assertIn("Key A sector 0: E6 7C 71 16 F6 0E", text)
+        self.assertIn("Key B sector 15: ", text)
+
+    def test_not_snapmaker(self):
+        self.assertIsNone(snapmaker.parse(bytes(1024)))
 
     def test_repeated_reads_and_no_raw(self):
         f, ser = make()

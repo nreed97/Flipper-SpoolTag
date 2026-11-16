@@ -74,7 +74,8 @@ The OpenSpool data written to the tag includes `spool_id`, so other SpoolLink ap
 | NTAG with OpenSpool data | UID plus the filament fields |
 | NTAG written by Spool Programmer / ACE-RFID (Anycubic ACE format) | UID plus the filament fields |
 | Blank or other NDEF NTAG | UID and the raw NDEF records |
-| Mifare Classic (Snapmaker, Bambu) | UID plus whatever blocks the Flipper has keys for; decoding comes in step 4 |
+| Snapmaker spool (Mifare Classic 1K) | UID plus the filament fields (brand, material, color, temps, weight, SKU); signature checked against Snapmaker's public keys |
+| Other Mifare Classic (Bambu, Creality, ...) | UID only, so it can still be linked; their data needs keys this app doesn't have |
 
 Writing is NTAG213/215/216 only. Pages 0 to 3 (UID, lock bits, Capability Container) are never written.
 
@@ -83,7 +84,8 @@ Writing is NTAG213/215/216 only. Pages 0 to 3 (UID, lock bits, Capability Contai
 Checked against the Momentum `mntm-012` source (`applications/main/nfc/cli`).
 
 - Waiting for a tag: `scanner` in the `nfc` shell blocks until a tag shows up. Ctrl+C aborts it.
-- Reading: `storage remove /ext/nfc/filament_manager.nfc`, then `dump -p mfu|mfc -f /ext/nfc/filament_manager.nfc`, then `storage read` of that file, parsed as a Flipper `.nfc` file.
+- Reading: `storage remove /ext/nfc/filament_manager.nfc`, then `dump -p mfu -f /ext/nfc/filament_manager.nfc`, then `storage read` of that file, parsed as a Flipper `.nfc` file.
+- Mifare Classic: the CLI's `dump -p mfc` only reads with keys from the Flipper's key cache, and fails with "failed to read" otherwise. So the app first runs `dump -p 14_3a` to get the UID, derives that tag's Snapmaker sector keys (HKDF-SHA256 from the UID, as the U1 does), writes them to `/ext/nfc/.cache/<UID>.keys` with `storage write_chunk`, then runs `dump -p mfc`. If those keys don't work the file is removed again and the tag is returned as UID only. An existing cache file is never overwritten. A bonus: once the cache file exists, the Flipper's own NFC app reads that spool instantly too.
 - Writing: `mfu rdbl -b N` to check the UID and Capability Container, `mfu wrbl -b N -d AABBCCDD` for each page, then a full read to verify.
 
 `raw` is avoided on purpose. In mntm-012, the second `raw` call in a session reuses freed memory and stalls the CLI.

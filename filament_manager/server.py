@@ -166,11 +166,13 @@ class App:
         return None
 
     def set_fake_tag(self, body):
-        from .fake import FakeTag
+        from .fake import FakeTag, snapmaker_tag
         ser = self.get_flipper().ser
         kind = body.get("kind", "blank")
         if kind == "none":
             ser.tag = None
+        elif kind == "snapmaker":
+            ser.tag = snapmaker_tag()
         else:
             ser.tag = FakeTag(uid=body.get("uid") or "04A1B2C3D4E5F6", classic=(kind == "classic"))
         return {"ok": True, "kind": kind}
