@@ -1,4 +1,4 @@
-# Flipper Spoolman filament manager
+# Flipper-SpoolTag
 
 Tested with a Flipper Zero on Momentum firmware `mntm-012`, Spoolman 0.27, NTAG215 stickers, and the [Snapmaker U1 extended firmware](https://github.com/paxx12-snapmaker-u1/SnapmakerU1-Extended-Firmware). It should work on any OS Python and pyserial run on.
 
@@ -29,8 +29,8 @@ The screenshots use simulated tags (`--fake`) and a demo Spoolman.
 Needs Python 3.10+ and `pyserial`. Find your Flipper's COM port in Device Manager (it's auto-detected if you leave `--port` out).
 
 ```powershell
-git clone <this repo>
-cd <repo folder>
+git clone https://github.com/nreed97/Flipper-SpoolTag.git
+cd Flipper-SpoolTag
 pip install pyserial
 python -m filament_manager.server --port COM5 --spoolman http://192.168.1.100:7912
 ```
