@@ -138,8 +138,11 @@
       </fieldset>
 
       <div class="actions">
+        <div class="opts">
         <label class="check"><input type="checkbox" id="opt-link" checked> Link the scanned tag</label>
         <label class="check"><input type="checkbox" id="opt-write" checked> Write OpenSpool data to it</label>
+        <label class="check" title="Some spools carry a tag on each side (Snapmaker does). After saving, the app waits for the other tag and links it to the same spool."><input type="checkbox" id="opt-pair"> Spool has a second tag: scan it next</label>
+        </div>
         <div class="spacer"></div>
         <button type="button" id="btn-clear" class="ghost">Clear</button>
         <button type="button" id="btn-save-only" class="ghost">Save only</button>

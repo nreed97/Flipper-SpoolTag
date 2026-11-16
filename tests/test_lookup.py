@@ -88,6 +88,22 @@ class SpoolmanEncoding(unittest.TestCase):
         self.assertLess(match_score(fil, {"type": "PETG", "color_hex": "0000FF"}), 1)
 
 
+class PartnerSpools(unittest.TestCase):
+    def test_second_tag_of_a_snapmaker_spool(self):
+        sm = type("SM", (), {"store": "native"})()
+        fil = {"material": "PETG", "vendor": {"name": "Snapmaker"}, "color_hex": "223622"}
+        other = {"material": "PLA", "vendor": {"name": "Hatchbox"}, "color_hex": "223622"}
+        spools = [
+            {"id": 1, "filament": fil, "extra": {}, "tags": [{"uid": "607A25E4"}]},
+            {"id": 2, "filament": fil, "extra": {}, "tags": [{"uid": "AA"}, {"uid": "BB"}]},  # already has both
+            {"id": 3, "filament": other, "extra": {}, "tags": [{"uid": "CC"}]},              # different filament
+            {"id": 4, "filament": fil, "extra": {}, "tags": [{"uid": "DD"}], "archived": True},
+            {"id": 5, "filament": fil, "extra": {}, "tags": [{"uid": "EE"}]},
+        ]
+        want = {"brand": "Snapmaker", "type": "PETG", "color_hex": "223622"}
+        self.assertEqual([s["id"] for s in lookup.partner_spools(sm, spools, want)], [5, 1])
+
+
 class WaitForTag(unittest.TestCase):
     def test_waits_until_tag_arrives(self):
         ser = FakeFlipperSerial(None)

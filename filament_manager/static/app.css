@@ -128,3 +128,4 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 .seg label:has(input:focus-visible) { outline: 2px solid var(--accent); }
 #w-calc b { color: var(--fg); }
 #w-calc.warn { color: var(--warn); }
+.opts { display: flex; flex-wrap: wrap; gap: 6px 16px; flex-basis: 100%; }
