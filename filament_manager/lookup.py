@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .spoolman import SpoolmanError, card_uids, decode_extra_str, hex_distance, match_score
+from .spoolman import SpoolmanError, card_uids, decode_extra_str, hex_distance, match_score, norm_uid, spool_uids, tag_kind
 
 UPCITEMDB = "https://api.upcitemdb.com/prod/trial/lookup?upc={upc}"
 
@@ -184,6 +184,16 @@ def tag_lookup(sm, tag):
         if len(old) == 1:
             out["linked_spools"] = [sm.link(old[0]["id"], tag["uid"], tag_format=tag.get("format"))["spool"]]
             out["migrated"] = True
+    elif sm.store == "native" and tag.get("format"):
+        # Keep Spoolman's tag type current, e.g. "blank" saved by an older version.
+        kind = tag_kind(tag["format"])
+        for i, s in enumerate(out["linked_spools"]):
+            stored = next((t.get("format") for t in s.get("tags") or [] if norm_uid(t.get("uid")) == norm_uid(tag["uid"])), kind)
+            if stored != kind:
+                try:
+                    out["linked_spools"][i] = sm.link(s["id"], tag["uid"], tag_format=tag["format"])["spool"]
+                except SpoolmanError:
+                    pass
     want = tag.get("filament") or {}
     if want and not out["linked_spools"]:
         filaments = sm.filaments()
@@ -194,8 +204,30 @@ def tag_lookup(sm, tag):
         sid = want.get("spool_id")
         if sid:
             out["legacy_spool"] = next((s for s in spools if s["id"] == int(sid)), None)
+        out["partner_spools"] = partner_spools(sm, spools, want)
         out["external"] = search_external(sm, want)
     return out
+
+
+PARTNER_MIN_SCORE = 7  # material + brand + a near-identical color
+
+
+def partner_spools(sm, spools, want, limit=3):
+    """Spools this tag may be the second tag of.
+
+    Some spools carry two tags (Snapmaker puts one on each side) with the same
+    data but different UIDs. Offer spools that match the tag's filament closely
+    and have exactly one tag linked so far, newest first.
+    """
+    found = []
+    for s in spools:
+        if s.get("archived") or len(spool_uids(s, sm.store)) != 1:
+            continue
+        score = match_score(s.get("filament") or {}, want)
+        if score >= PARTNER_MIN_SCORE:
+            found.append((score, s["id"], s))
+    found.sort(key=lambda x: (-x[0], -x[1]))
+    return [s for _, _, s in found[:limit]]
 
 
 def upc_lookup(sm, code, online=True):

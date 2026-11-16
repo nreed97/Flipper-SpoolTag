@@ -88,6 +88,59 @@ class SpoolmanEncoding(unittest.TestCase):
         self.assertLess(match_score(fil, {"type": "PETG", "color_hex": "0000FF"}), 1)
 
 
+class PartnerSpools(unittest.TestCase):
+    def test_second_tag_of_a_snapmaker_spool(self):
+        sm = type("SM", (), {"store": "native"})()
+        fil = {"material": "PETG", "vendor": {"name": "Snapmaker"}, "color_hex": "223622"}
+        other = {"material": "PLA", "vendor": {"name": "Hatchbox"}, "color_hex": "223622"}
+        spools = [
+            {"id": 1, "filament": fil, "extra": {}, "tags": [{"uid": "607A25E4"}]},
+            {"id": 2, "filament": fil, "extra": {}, "tags": [{"uid": "AA"}, {"uid": "BB"}]},  # already has both
+            {"id": 3, "filament": other, "extra": {}, "tags": [{"uid": "CC"}]},              # different filament
+            {"id": 4, "filament": fil, "extra": {}, "tags": [{"uid": "DD"}], "archived": True},
+            {"id": 5, "filament": fil, "extra": {}, "tags": [{"uid": "EE"}]},
+        ]
+        want = {"brand": "Snapmaker", "type": "PETG", "color_hex": "223622"}
+        self.assertEqual([s["id"] for s in lookup.partner_spools(sm, spools, want)], [5, 1])
+
+
+class LinkFormat(unittest.TestCase):
+    def make(self, tags):
+        from filament_manager.spoolman import Spoolman
+        sm = Spoolman("http://x", store="native")
+        sm.calls = []
+        spool = {"id": 1, "extra": {}, "tags": tags}
+        sm.ensure_fields = lambda: None
+        sm.spools_with_uid = lambda uid, spools=None: []
+        sm.spools = lambda *a, **k: [spool]
+        sm.spool = lambda sid: spool
+        sm.request = lambda method, path, body=None, **k: sm.calls.append((method, path, body))
+        return sm
+
+    def test_kind_not_content(self):
+        sm = self.make([])
+        sm.link(1, "530178cf330001", tag_format="blank")
+        self.assertEqual(sm.calls, [("POST", "/spool/1/tag", {"uid": "530178CF330001", "format": "ntag"})])
+
+    def test_relink_updates_stale_format(self):
+        sm = self.make([{"uid": "530178CF330001", "format": "blank"}])
+        sm.link(1, "530178CF330001", tag_format="openspool")
+        self.assertEqual([c[0] for c in sm.calls], ["DELETE", "POST"])
+        self.assertEqual(sm.calls[1][2]["format"], "openspool")
+
+    def test_scan_fixes_stale_format(self):
+        sm = self.make([{"uid": "530178CF330001", "format": "blank"}])
+        spool = sm.spool(1)
+        sm.spools_with_uid = lambda uid, spools=None: [spool]
+        lookup.tag_lookup(sm, {"uid": "530178CF330001", "format": "openspool"})
+        self.assertEqual([c[0] for c in sm.calls], ["DELETE", "POST"])
+
+    def test_relink_same_format_is_a_no_op(self):
+        sm = self.make([{"uid": "607A25E4", "format": "snapmaker"}])
+        sm.link(1, "607A25E4", tag_format="snapmaker")
+        self.assertEqual(sm.calls, [])
+
+
 class WaitForTag(unittest.TestCase):
     def test_waits_until_tag_arrives(self):
         ser = FakeFlipperSerial(None)

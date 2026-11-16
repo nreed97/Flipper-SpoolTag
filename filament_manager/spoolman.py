@@ -52,6 +52,18 @@ def card_uids(spool):
     return [u for u in (norm_uid(x) for x in raw.split(",")) if u]
 
 
+# What we decoded from a tag -> the kind of tag Spoolman's `format` field describes.
+# Content states (blank, other NDEF) are just NTAGs to Spoolman.
+TAG_KINDS = {"openspool": "openspool", "ace": "anycubic", "snapmaker": "snapmaker",
+             "blank": "ntag", "ndef": "ntag", "unformatted": "ntag", "uid_only": "mifare_classic"}
+
+
+def tag_kind(tag_format):
+    if not tag_format:
+        return None
+    return TAG_KINDS.get(tag_format, tag_format)
+
+
 def spool_uids(spool, store):
     if store == "native":
         return [norm_uid(t.get("uid")) for t in spool.get("tags") or []]
@@ -256,10 +268,16 @@ class Spoolman:
             for s in others:
                 self.request("DELETE", f"/spool/{s['id']}/tag/{uid}")
             target = self.spool(spool_id)
-            if uid not in spool_uids(target, "native"):
+            kind = tag_kind(tag_format)
+            current = next((t for t in target.get("tags") or [] if norm_uid(t.get("uid")) == uid), None)
+            if current and kind and current.get("format") != kind:
+                # Relinking with better info (e.g. a blank tag that now holds OpenSpool data).
+                self.request("DELETE", f"/spool/{spool_id}/tag/{uid}")
+                current = None
+            if not current:
                 body = {"uid": uid}
-                if tag_format:
-                    body["format"] = tag_format
+                if kind:
+                    body["format"] = kind
                 self.request("POST", f"/spool/{spool_id}/tag", body)
             # Migrate: drop this UID from any card_uids list left over from the other store.
             for s in self.spools():

@@ -64,6 +64,7 @@ The page follows the U1 extended firmware's SpoolLink conventions:
 - **Card UIDs**: the spool's `card_uids` extra field, a JSON-encoded comma-separated list (SpoolLink's default). The page creates that field only in this mode.
 - When a tag that was linked through `card_uids` is scanned in Spoolman tags mode, it's moved to a native tag automatically.
 - A UID belongs to one spool at a time.
+- A spool can have more than one tag. Snapmaker spools have one on each side with different UIDs, and both get linked so the printer finds the spool whichever way it faces. When saving, tick **Spool has a second tag: scan it next** (on by default for Snapmaker tags) and the app waits for the other tag right after. Scanning an unlinked tag that matches a spool with only one tag also offers "Other tag of spool #N" at the top of the matches, so the second side doesn't become a duplicate spool.
 
 The OpenSpool data written to the tag includes `spool_id`, so other SpoolLink apps can find the spool too.
 

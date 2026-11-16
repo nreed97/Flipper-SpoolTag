@@ -157,6 +157,7 @@ async function handleTag(t) {
     : "";
   $("tag-notes").textContent = (t.notes || []).join(" ");
 
+  $("opt-pair").checked = t.format === "snapmaker";  // Snapmaker spools have a tag on each side
   const writable = t.family === "ntag";
   $("opt-write").disabled = !writable;
   $("opt-write").checked = writable && state.writePref;
@@ -194,6 +195,7 @@ function renderSuggestions(t, lk, f) {
   setMode("new", state.mode === "existing");
   if (f) applyFields(tagToFields(f), true);
   const rows = [];
+  for (const s of lk.partner_spools || []) rows.push({ kind: "partner", label: `Other tag of ${spoolLabel(s)}`, sub: `That spool has 1 tag so far${s.location ? " · " + s.location : ""}. Link this one too?`, spool: s, src: "pair" });
   if (lk.legacy_spool) rows.push({ kind: "spool", label: `Tag says spool ${spoolLabel(lk.legacy_spool)}`, sub: "Written by an older app. Link it to that spool?", spool: lk.legacy_spool, src: "tag" });
   for (const s of lk.suggestions || []) rows.push({ kind: "filament", label: filLabel(s.filament), sub: `${s.filament.color_hex ? "#" + s.filament.color_hex : ""} · your filament #${s.filament.id}`, color: s.filament.color_hex, filament: s.filament, fields: s.fields, score: s.score, src: "yours" });
   for (const x of lk.external || []) rows.push({ kind: "external", label: `${x.external.manufacturer} ${x.external.name}`, sub: `${x.external.material} · SpoolmanDB`, color: x.fields.color_hex, fields: x.fields, score: x.score, src: "db" });
@@ -206,6 +208,7 @@ function renderSuggestions(t, lk, f) {
     $("suggest-list").querySelectorAll(".item").forEach((b) => (b.onclick = () => {
       const r = rows[+b.dataset.i];
       if (r.kind === "spool") return loadSpool(r.spool.id);
+      if (r.kind === "partner") return linkSecondTag(r.spool.id, t);
       setMode("new", false);
       if (r.kind === "filament") chooseBase(r.filament);
       else { chooseBase(null); applyFields(r.fields, true); }
@@ -283,6 +286,7 @@ function updateGoLabel() {
   const link = $("opt-link").checked && state.tag, write = $("opt-write").checked && !$("opt-write").disabled && state.tag;
   $("btn-go").textContent = "Save" + (link ? (write ? ", link & write" : " & link") : "");
   $("opt-link").disabled = !state.tag; $("opt-link").parentElement.title = state.tag ? "" : "Scan a tag first";
+  $("opt-pair").disabled = !link;
 }
 
 function loadSpool(id) {
@@ -453,13 +457,15 @@ function buildSave() {
 
 function showResult(kind, html) { const r = $("result"); r.hidden = false; r.className = "result " + kind; r.innerHTML = html; }
 
-async function linkWithConfirm(spoolId, uid) {
-  try { return await api("/api/link", { spool_id: spoolId, uid, format: state.tag && state.tag.format }); }
+async function linkWithConfirm(spoolId, uid, format) {
+  // `format` is what the tag will hold after this save: "openspool" when we're about to write it.
+  format = format || (state.tag && state.tag.format);
+  try { return await api("/api/link", { spool_id: spoolId, uid, format }); }
   catch (e) {
     if (e.status !== 409 || !e.data.conflict) throw e;
     const names = e.data.conflict.map((c) => c.name).join(", ");
     if (!(await confirmDialog("Tag already in use", `${uid} is linked to ${names}. Move it to spool #${spoolId}? It will be removed from the other spool.`, "Move it"))) return null;
-    return await api("/api/link", { spool_id: spoolId, uid, move: true, format: state.tag && state.tag.format });
+    return await api("/api/link", { spool_id: spoolId, uid, move: true, format });
   }
 }
 
@@ -468,6 +474,7 @@ async function go(doLink, doWrite) {
   try { payload = buildSave(); } catch (e) { return showResult("bad", esc(e.message)); }
   const tag = state.tag;
   doLink = doLink && !!tag; doWrite = doWrite && !!tag && tag.family === "ntag";
+  const doPair = doLink && $("opt-pair").checked;  // read now: loading the saved spool resets the form
   const steps = [];
   $("btn-go").disabled = $("btn-save-only").disabled = true;
   showResult("busy", "Saving to Spoolman…");
@@ -476,7 +483,7 @@ async function go(doLink, doWrite) {
     steps.push(`${payload.spool_id ? "Updated" : "Created"} spool #${spool.id} (${esc(filLabel(spool.filament))})`);
     if (doLink) {
       showResult("busy", steps.join("<br>") + "<br>Linking tag…");
-      const r = await linkWithConfirm(spool.id, tag.uid);
+      const r = await linkWithConfirm(spool.id, tag.uid, doWrite ? "openspool" : tag.format);
       if (r) steps.push(`Linked tag ${esc(tag.uid)}${r.moved_from.length ? ` (moved from #${r.moved_from.join(", #")})` : ""}`);
       else { steps.push("Tag not linked (cancelled)"); doWrite = false; }
     }
@@ -493,10 +500,15 @@ async function go(doLink, doWrite) {
       if (doWrite) $("tag-format").textContent = "OpenSpool";
     }
     showResult("ok", `<b>Done.</b><ul>${steps.map((s) => `<li>${s}</li>`).join("")}</ul>` +
-      (doLink ? `<div class="row"><button type="button" class="small" id="btn-pair">Pair a second tag</button><button type="button" class="small ghost" id="btn-next">Next spool</button></div>` : ""));
+      (doLink ? `<div class="row"><button type="button" class="primary" id="btn-pair">Add a second tag to this spool</button><button type="button" class="ghost" id="btn-next">Next spool</button></div>` : ""));
     if (doLink) {
       $("btn-pair").onclick = () => pairAnother(spool.id);
-      $("btn-next").onclick = () => { clearForm(); if ($("autoscan").checked) pollLoop(tag.uid); };
+      $("btn-next").onclick = async () => { await stopPolling(); clearForm(); if ($("autoscan").checked) pollLoop(tag.uid); };
+      // "Spool has a second tag": go straight to waiting for the other one.
+      const saved = state.catalog.spools.find((s) => s.id === spool.id) || {};
+      if (doPair && !(saved.uids || []).some((u) => u !== tag.uid))
+        pairAnother(spool.id, `<ul>${steps.map((s) => `<li>${s}</li>`).join("")}</ul><b>Now the second tag:</b> ` +
+          (tag.format === "snapmaker" ? "flip the spool and hold the other side to the Flipper." : "hold it to the Flipper."));
     }
   } catch (e) {
     showResult("bad", (steps.length ? `<ul>${steps.map((s) => `<li>${s}</li>`).join("")}</ul>` : "") + `<b>Failed:</b> ${esc(e.message)}`);
@@ -505,23 +517,35 @@ async function go(doLink, doWrite) {
   }
 }
 
-async function pairAnother(spoolId) {
-  showResult("busy", "Hold the second tag to the Flipper…");
+async function linkSecondTag(spoolId, t) {
+  try {
+    const write = t.family === "ntag" && $("opt-write").checked;
+    const r = await linkWithConfirm(spoolId, t.uid, write ? "openspool" : t.format);
+    if (!r) return showResult("bad", "Second tag not linked.");
+    $("tag-uid").textContent = t.uid;
+    let msg = `Linked tag ${esc(t.uid)} to spool #${spoolId} as well.`;
+    if (write) {
+      await api("/api/tag/write", { spool_id: spoolId, expect_uid: t.uid });
+      msg += " Wrote OpenSpool data.";
+    }
+    await loadCatalog(); loadSpool(spoolId);
+    renderLinked(state.catalog.spools.filter((s) => s.id === spoolId));
+    showResult("ok", `<b>Done.</b> ${msg}`);
+    if ($("autoscan").checked) pollLoop(t.uid);
+  } catch (e) { showResult("bad", `<b>Failed:</b> ${esc(e.message)}`); }
+}
+
+async function pairAnother(spoolId, prompt) {
+  showResult("busy", (prompt || "Hold the second tag to the Flipper…") +
+    `<div class="row"><button type="button" class="small ghost" id="btn-skip-pair">Skip</button></div>`);
+  $("result").scrollIntoView({ block: "nearest", behavior: "smooth" });
+  $("btn-skip-pair").onclick = async () => { await stopPolling(); clearForm(); showResult("ok", "Skipped the second tag."); if ($("autoscan").checked) pollLoop(state.lastUid); };
   await stopPolling();
-  pollLoop(state.lastUid, async (t) => {
+  const firstUid = state.lastUid;
+  pollLoop(firstUid, async (t) => {
     state.tag = t; state.lastUid = t.uid;
     setScan("done", "Second tag read", t.uid);
-    try {
-      const r = await linkWithConfirm(spoolId, t.uid);
-      if (!r) return showResult("bad", "Second tag not linked.");
-      let msg = `Linked second tag ${esc(t.uid)} to spool #${spoolId}.`;
-      if (t.family === "ntag" && $("opt-write").checked) {
-        await api("/api/tag/write", { spool_id: spoolId, expect_uid: t.uid });
-        msg += " Wrote OpenSpool data.";
-      }
-      await loadCatalog(); loadSpool(spoolId);
-      showResult("ok", `<b>Done.</b> ${msg}`);
-    } catch (e) { showResult("bad", `<b>Failed:</b> ${esc(e.message)}`); }
+    await linkSecondTag(spoolId, t);
   });
 }
 
